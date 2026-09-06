@@ -161,15 +161,9 @@ static volatile int kernel_init_done = 0;
 static void before_kernel_init(hook_fargs4_t *args, void *udata)
 {
     args->local.data0 = 0;
-    if (kernel_init_done) {
-        args->skip_origin = 0;
-        return;
-    }
+    if (kernel_init_done) return;
 
-    if (xchg(&kernel_init_done, 1)) {
-        args->skip_origin = 0;
-        return;
-    }
+    if (xchg(&kernel_init_done, 1)) return;
 
     args->local.data0 = 1;
     extra_event_init(EXTRA_EVENT_PRE_KERNEL_INIT);

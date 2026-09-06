@@ -211,10 +211,12 @@ static int path_has_suffix(const char *path, const char *suffix)
     return strcmp(path + path_len - suffix_len, suffix) == 0;
 }
 
-static __maybe_unused int is_packages_list_tmp_dentry_path(const char *path)
+#ifndef CONFIG_KP_NO_OFFICIAL_MANAGER
+static int is_packages_list_tmp_dentry_path(const char *path)
 {
     return path_has_suffix(path, "/system/packages.list.tmp");
 }
+#endif
 
 /* bounds-checked read: fails if [*pos, *pos+size) would fall outside [*pos, end) */
 static int read_exact(struct file *fp, void *buf, size_t size, loff_t *pos, loff_t end)
@@ -1127,7 +1129,8 @@ int refresh_trusted_manager_uid(void)
     return refresh_trusted_manager_state();
 }
 
-static __maybe_unused int refresh_trusted_manager_state_from_packages_list(int use_tmp)
+#ifndef CONFIG_KP_NO_OFFICIAL_MANAGER
+static int refresh_trusted_manager_state_from_packages_list(int use_tmp)
 {
     uid_t uid = TRUSTED_MANAGER_UID_INVALID;
     int rc = refresh_trusted_manager_uid_from_packages_list(&uid, use_tmp);
@@ -1143,6 +1146,7 @@ static __maybe_unused int refresh_trusted_manager_state_from_packages_list(int u
     
     return 0;
 }
+#endif
 
 int refresh_trusted_manager_state(void)
 {
@@ -1179,6 +1183,7 @@ uid_t get_trusted_manager_uid(void)
 }
 KP_EXPORT_SYMBOL(get_trusted_manager_uid);
 
+#ifndef CONFIG_KP_NO_ROOT
 // Simple CSV field parser helper function
 static __maybe_unused char *parse_csv_field(char **line_ptr)
 {
@@ -1222,6 +1227,7 @@ static __maybe_unused char *parse_csv_field(char **line_ptr)
 
     return start;
 }
+#endif
 
 // Load APatch package_config configuration file
 // Returns: number of entries loaded, or negative error code

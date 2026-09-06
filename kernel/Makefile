@@ -46,10 +46,10 @@ ifdef ANDROID
 endif
 
 ENABLE_ROOT ?= 1
-ifneq ($(NO_ROOT),)
+ifeq ($(NO_ROOT),1)
 	ENABLE_ROOT := 0
 endif
-ifneq ($(DISABLE_ROOT),)
+ifeq ($(DISABLE_ROOT),1)
 	ENABLE_ROOT := 0
 endif
 
@@ -59,13 +59,13 @@ ifeq ($(ENABLE_ROOT),0)
 endif
 
 ENABLE_OFFICIAL_MANAGER ?= $(ENABLE_ROOT)
-ifneq ($(OFFICIAL_MANAGER),)
+ifeq ($(OFFICIAL_MANAGER),1)
 	ENABLE_OFFICIAL_MANAGER := $(OFFICIAL_MANAGER)
 endif
-ifneq ($(NO_MANAGER),)
+ifeq ($(NO_MANAGER),1)
 	ENABLE_OFFICIAL_MANAGER := 0
 endif
-ifneq ($(NO_OFFICIAL_MANAGER),)
+ifeq ($(NO_OFFICIAL_MANAGER),1)
 	ENABLE_OFFICIAL_MANAGER := 0
 endif
 
