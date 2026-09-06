@@ -22,6 +22,12 @@ make ANDROID=1 NO_ROOT=1
 make ANDROID=1 NO_ROOT=1 OFFICIAL_MANAGER=1
 # 在标准 root 构建中禁用官方 Manager rename hook：
 make ANDROID=1 NO_MANAGER=1
+
+# 自动加载 KPM 模块（适用于无官方 Manager 或启用 NO_ROOT 的构建）：
+# 在 /data 分区挂载后（post-fs-data 阶段，Zygote 启动前）自动从 /data/adb/kpm 或 /data/adb/ap/kpm 加载 KPM 模块：
+make ANDROID=1 NO_ROOT=1 AUTOLOAD_KPM=1
+# 或在无官方 Manager 的标准 root 构建中：
+make ANDROID=1 NO_MANAGER=1 AUTOLOAD_KPM=1
 ```
 
 ## 编译 kptools

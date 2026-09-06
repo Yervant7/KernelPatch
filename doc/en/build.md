@@ -22,6 +22,12 @@ make ANDROID=1 NO_ROOT=1
 make ANDROID=1 NO_ROOT=1 OFFICIAL_MANAGER=1
 # To disable official manager rename hooks in a standard root build:
 make ANDROID=1 NO_MANAGER=1
+
+# Autoload KPM modules (for builds without official manager or with NO_ROOT):
+# Automatically load KPM modules from /data/adb/kpm or /data/adb/ap/kpm once /data is mounted (post-fs-data, before Zygote):
+make ANDROID=1 NO_ROOT=1 AUTOLOAD_KPM=1
+# Or in a standard root build without official manager:
+make ANDROID=1 NO_MANAGER=1 AUTOLOAD_KPM=1
 ```
 
 ## Build kptools

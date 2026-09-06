@@ -41,6 +41,7 @@
 #include <linux/errno.h>
 #include <log.h>
 #include <common.h>
+#include <asm/cmpxchg.h>
 #include <module.h>
 
 #define REPLACE_RC_FILE "/dev/user_init.rc"
@@ -55,6 +56,7 @@
 #define AP_PACKAGE_CONFIG_PATH "/data/adb/ap/package_config"
 #define ANDROID_PACKAGES_LIST_PATH "/data/system/packages.list"
 #define ANDROID_PACKAGES_LIST_TMP_PATH "/data/system/packages.list.tmp"
+#define ADB_KPM_DIR ADB_FLODER "kpm/"
 #define AP_KPM_DIR AP_DIR "kpm/"
 #define AP_KPM_NAME_LEN 128
 #define AP_KPM_MAX_MODULES 256
@@ -72,6 +74,7 @@ extern int android_is_safe_mode;
 #define TRUSTED_MANAGER_DIGEST_LEN SHA256_BLOCK_SIZE
 #define TRUSTED_MANAGER_UID_INVALID ((uid_t)-1)
 
+#ifndef CONFIG_KP_NO_OFFICIAL_MANAGER
 struct trusted_manager_entry {
     const char package[64];
     const uint8_t digest[TRUSTED_MANAGER_DIGEST_LEN];
@@ -100,8 +103,7 @@ static const struct trusted_manager_entry trusted_managers[] = {
 };
 
 static uid_t trusted_manager_uid = TRUSTED_MANAGER_UID_INVALID;
-static __maybe_unused int global_pkg_pos = 0;
-
+#endif /* CONFIG_KP_NO_OFFICIAL_MANAGER */
 
 #ifndef CONFIG_KP_NO_ROOT
 static const char ORIGIN_RC_FILES[][64] = {
@@ -173,6 +175,7 @@ static int expand_rc_template(char *dst, size_t dst_size, const char *template, 
 }
 #endif /* CONFIG_KP_NO_ROOT */
 
+#ifndef CONFIG_KP_NO_OFFICIAL_MANAGER
 static const void *kernel_read_file(const char *path, loff_t *len)
 {
     set_priv_sel_allow(current, true);
@@ -199,6 +202,7 @@ out:
     set_priv_sel_allow(current, false);
     return data;
 }
+#endif
 
 static int path_has_suffix(const char *path, const char *suffix)
 {
@@ -216,7 +220,6 @@ static int is_packages_list_tmp_dentry_path(const char *path)
 {
     return path_has_suffix(path, "/system/packages.list.tmp");
 }
-#endif
 
 /* bounds-checked read: fails if [*pos, *pos+size) would fall outside [*pos, end) */
 static int read_exact(struct file *fp, void *buf, size_t size, loff_t *pos, loff_t end)
@@ -1057,8 +1060,6 @@ out_free:
     return rc;
 }
 
-
-
 static int refresh_trusted_manager_uid_from_packages_list(uid_t *trusted_uid_out, int use_tmp)
 {
     uid_t last_uid = TRUSTED_MANAGER_UID_INVALID;
@@ -1123,6 +1124,7 @@ static int refresh_trusted_manager_uid_from_packages_list(uid_t *trusted_uid_out
     *trusted_uid_out = last_uid;
     return 0;
 }
+#endif /* CONFIG_KP_NO_OFFICIAL_MANAGER */
 
 int refresh_trusted_manager_uid(void)
 {
@@ -1185,7 +1187,7 @@ KP_EXPORT_SYMBOL(get_trusted_manager_uid);
 
 #ifndef CONFIG_KP_NO_ROOT
 // Simple CSV field parser helper function
-static __maybe_unused char *parse_csv_field(char **line_ptr)
+static char *parse_csv_field(char **line_ptr)
 {
     char *start = *line_ptr;
     char *end = start;
@@ -1428,11 +1430,11 @@ next_line:
 KP_EXPORT_SYMBOL(load_ap_package_config);
 
 /*
- * Scan /data/adb/ap/kpm without opening children from the readdir callback.
+ * Scan KPM directory without opening children from the readdir callback.
  * Some Android kernels hold the directory inode lock while iterate_dir() is
  * running, so child opens are deliberately deferred until after the scan.
- * The expected layout is kpm/<module_id>/<module_id>.kpm, with an optional
- * kpm/<module_id>/disable marker.
+ * Supports both directory layout (kpm/<module_id>/<module_id>.kpm) and flat layout
+ * (kpm/<module_name>.kpm), along with their respective disable markers.
  */
 struct ap_kpm_scan_ctx {
     struct dir_context dctx;
@@ -1480,7 +1482,20 @@ static int ap_kpm_scan_actor_int(struct dir_context_int *dctx, const char *name,
     return 0;
 }
 
-int load_ap_kpm_modules(void)
+static bool file_exists_privileged(const char *path)
+{
+    struct file *f;
+    set_priv_sel_allow(current, true);
+    f = filp_open(path, O_RDONLY | O_NOFOLLOW, 0);
+    set_priv_sel_allow(current, false);
+    if (f && !IS_ERR(f)) {
+        filp_close(f, 0);
+        return true;
+    }
+    return false;
+}
+
+static int scan_and_load_kpm_dir(const char *kpm_dir, const char *event)
 {
     struct file *dir;
     char *names;
@@ -1488,19 +1503,33 @@ int load_ap_kpm_modules(void)
     int rc;
 
     if (android_is_safe_mode) return 0;
-    names = vmalloc((size_t)AP_KPM_MAX_MODULES * AP_KPM_NAME_LEN);
-    if (!names) return -ENOMEM;
-    memset(names, 0, (size_t)AP_KPM_MAX_MODULES * AP_KPM_NAME_LEN);
+
+    // Check directory disable file: <kpm_dir>disable (e.g. /data/adb/kpm/disable)
+    char global_disable[AP_KPM_NAME_LEN + 128];
+    int gd_len = snprintf(global_disable, sizeof(global_disable), "%sdisable", kpm_dir);
+    if (gd_len > 0 && gd_len < (int)sizeof(global_disable)) {
+        if (file_exists_privileged(global_disable)) {
+            log_boot("KPM directory disabled by %s\n", global_disable);
+            return 0;
+        }
+    }
 
     set_priv_sel_allow(current, true);
-    dir = filp_open(AP_KPM_DIR, O_RDONLY | O_NOFOLLOW, 0);
+    dir = filp_open(kpm_dir, O_RDONLY | O_NOFOLLOW, 0);
     if (!dir || IS_ERR(dir)) {
         rc = dir ? PTR_ERR(dir) : -ENOENT;
         set_priv_sel_allow(current, false);
-        kvfree(names);
-        if (rc != -ENOENT) log_boot("open AP KPM directory failed: %d\n", rc);
-        return rc == -ENOENT ? 0 : rc;
+        if (rc != -ENOENT) log_boot("open KPM directory failed: %s, rc: %d\n", kpm_dir, rc);
+        return rc;
     }
+
+    names = vmalloc((size_t)AP_KPM_MAX_MODULES * AP_KPM_NAME_LEN);
+    if (!names) {
+        filp_close(dir, 0);
+        set_priv_sel_allow(current, false);
+        return -ENOMEM;
+    }
+    memset(names, 0, (size_t)AP_KPM_MAX_MODULES * AP_KPM_NAME_LEN);
 
     if (kver >= VERSION(6, 1, 0)) {
         struct ap_kpm_scan_ctx ctx = { .names = names };
@@ -1520,37 +1549,98 @@ int load_ap_kpm_modules(void)
 
     for (int i = 0; i < count; i++) {
         char *id = names + i * AP_KPM_NAME_LEN;
-        char path[AP_KPM_NAME_LEN * 2 + sizeof(AP_KPM_DIR) + 8];
-        char disable[AP_KPM_NAME_LEN + sizeof(AP_KPM_DIR) + 16];
-        int path_len = snprintf(path, sizeof(path), AP_KPM_DIR "%s/%s.kpm", id, id);
-        int disable_len = snprintf(disable, sizeof(disable), AP_KPM_DIR "%s/disable", id);
-        struct file *marker;
+        char path[AP_KPM_NAME_LEN * 2 + 128];
+        char disable[AP_KPM_NAME_LEN + 128];
+        int path_len, disable_len;
 
-        if (path_len <= 0 || path_len >= sizeof(path) || disable_len <= 0 || disable_len >= sizeof(disable)) {
+        if (path_has_suffix(id, ".disable")) {
             skipped++;
             continue;
         }
+
+        if (path_has_suffix(id, ".kpm")) {
+            path_len = snprintf(path, sizeof(path), "%s%s", kpm_dir, id);
+            disable_len = snprintf(disable, sizeof(disable), "%s%s.disable", kpm_dir, id);
+        } else {
+            path_len = snprintf(path, sizeof(path), "%s%s/%s.kpm", kpm_dir, id, id);
+            disable_len = snprintf(disable, sizeof(disable), "%s%s/disable", kpm_dir, id);
+        }
+
+        if (path_len <= 0 || path_len >= (int)sizeof(path) || disable_len <= 0 || disable_len >= (int)sizeof(disable)) {
+            skipped++;
+            continue;
+        }
+
+        if (file_exists_privileged(disable)) {
+            log_boot("skip disabled KPM: %s\n", id);
+            skipped++;
+            continue;
+        }
+
+        if (path_has_suffix(id, ".kpm")) {
+            char disable2[AP_KPM_NAME_LEN + 128];
+            int stem_len = (int)strlen(id) - 4;
+            if (stem_len > 0) {
+                int disable2_len = snprintf(disable2, sizeof(disable2), "%s%.*s.disable", kpm_dir, stem_len, id);
+                if (disable2_len > 0 && disable2_len < (int)sizeof(disable2)) {
+                    if (file_exists_privileged(disable2)) {
+                        log_boot("skip disabled KPM: %s\n", id);
+                        skipped++;
+                        continue;
+                    }
+                }
+            }
+        }
+
         set_priv_sel_allow(current, true);
-        marker = filp_open(disable, O_RDONLY | O_NOFOLLOW, 0);
-        if (marker && !IS_ERR(marker)) {
-            filp_close(marker, 0);
-            set_priv_sel_allow(current, false);
-            log_boot("skip disabled AP KPM: %s\n", id);
-            skipped++;
-            continue;
-        }
+        rc = load_module_path_event(path, 0, event, 0);
         set_priv_sel_allow(current, false);
-
-        rc = load_module_path_event(path, 0, EXTRA_EVENT_POST_FS_DATA, 0);
-        log_boot("load AP KPM: %s, event: %s, rc: %d\n", path, EXTRA_EVENT_POST_FS_DATA, rc);
+        log_boot("load KPM: %s, event: %s, rc: %d\n", path, event, rc);
         if (!rc) loaded++;
     }
 
     kvfree(names);
-    log_boot("AP KPM loading done: loaded=%d skipped=%d total=%d\n", loaded, skipped, count);
+    log_boot("KPM loading from %s done: loaded=%d skipped=%d total=%d\n", kpm_dir, loaded, skipped, count);
     return loaded;
 }
+
+static volatile int adb_kpm_loaded = 0;
+static volatile int ap_kpm_loaded = 0;
+
+int load_ap_kpm_modules(void)
+{
+    if (xchg(&ap_kpm_loaded, 1)) return 0;
+    return scan_and_load_kpm_dir(AP_KPM_DIR, EXTRA_EVENT_POST_FS_DATA);
+}
 KP_EXPORT_SYMBOL(load_ap_kpm_modules);
+
+#ifdef CONFIG_KP_AUTOLOAD_KPM
+int autoload_kpm_modules(void)
+{
+    int loaded = 0;
+
+    if (!adb_kpm_loaded) {
+        int rc = scan_and_load_kpm_dir(ADB_KPM_DIR, EXTRA_EVENT_POST_FS_DATA);
+        if (rc >= 0) {
+            adb_kpm_loaded = 1;
+            loaded += rc;
+        }
+    }
+
+    if (!ap_kpm_loaded) {
+        int rc = scan_and_load_kpm_dir(AP_KPM_DIR, EXTRA_EVENT_POST_FS_DATA);
+        if (rc >= 0) {
+            ap_kpm_loaded = 1;
+            loaded += rc;
+        }
+    }
+
+    if (loaded > 0) {
+        log_boot("autoload KPM done: %d loaded\n", loaded);
+    }
+    return loaded;
+}
+#endif
 
 static void pre_user_exec_init()
 {
@@ -1584,11 +1674,22 @@ static void post_init_second_stage()
 
 static void on_first_app_process()
 {
+#ifdef CONFIG_KP_AUTOLOAD_KPM
+    if (!adb_kpm_loaded || !ap_kpm_loaded) {
+        autoload_kpm_modules();
+        adb_kpm_loaded = 1;
+        ap_kpm_loaded = 1;
+    }
+#endif
 #ifndef CONFIG_KP_NO_OFFICIAL_MANAGER
     /* Refresh the trusted-manager state (APK scan) synchronously here.  The scan
      * itself is two-phase so it cannot deadlock on the /data/app inode lock. */
     int rc = refresh_trusted_manager_state();
     log_boot("on_first_app_process: trusted manager refresh rc=%d\n", rc);
+#endif
+
+#if defined(CONFIG_KP_NO_ROOT) && defined(CONFIG_KP_NO_OFFICIAL_MANAGER)
+    unhook_bypass_selinux();
 #endif
 }
 
@@ -1685,6 +1786,12 @@ static void handle_before_execve(hook_local_t *hook_local, char **__user u_filen
         hook_local->data7 = 1;
         return;
     }
+
+#ifdef CONFIG_KP_AUTOLOAD_KPM
+    if (init_second_stage_executed && (!adb_kpm_loaded || !ap_kpm_loaded)) {
+        autoload_kpm_modules();
+    }
+#endif
 }
 
 static void before_execve(hook_fargs3_t *args, void *udata);

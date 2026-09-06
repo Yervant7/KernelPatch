@@ -48,9 +48,7 @@ int resolve_struct();
 int task_observer();
 int hotpatch_init();
 int bypass_kcfi();
-#ifndef CONFIG_KP_NO_ROOT
 int bypass_selinux();
-#endif
 int resolve_pt_regs();
 int supercall_install();
 void module_init();
@@ -81,10 +79,8 @@ static void before_rest_init(hook_fargs4_t *args, void *udata)
     if ((rc = resolve_struct())) goto out;
     log_boot("resolve_struct done: %d\n", rc);
 
-#ifndef CONFIG_KP_NO_ROOT
     if ((rc = bypass_selinux())) goto out;
     log_boot("bypass_selinux done: %d\n", rc);
-#endif
 
     if ((rc = task_observer())) goto out;
     log_boot("task_observer done: %d\n", rc);

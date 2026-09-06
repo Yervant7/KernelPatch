@@ -74,6 +74,22 @@ ifeq ($(ENABLE_OFFICIAL_MANAGER),0)
 	X86_CFLAGS += -DCONFIG_KP_NO_OFFICIAL_MANAGER
 endif
 
+ENABLE_AUTOLOAD_KPM ?= 0
+ifeq ($(AUTOLOAD_KPM),1)
+	ENABLE_AUTOLOAD_KPM := 1
+endif
+ifeq ($(CONFIG_KP_AUTOLOAD_KPM),1)
+	ENABLE_AUTOLOAD_KPM := 1
+endif
+ifeq ($(NO_AUTOLOAD_KPM),1)
+	ENABLE_AUTOLOAD_KPM := 0
+endif
+
+ifeq ($(ENABLE_AUTOLOAD_KPM),1)
+	CFLAGS += -DCONFIG_KP_AUTOLOAD_KPM
+	X86_CFLAGS += -DCONFIG_KP_AUTOLOAD_KPM
+endif
+
 INCLUDE := -I. -Iinclude -Ipatch/include -Ilinux -Ilinux/include -Ilinux/arch/arm64/include -Ilinux/tools/arch/arm64/include
 
 X86_INCLUDE := -I. -Iinclude -Ipatch/include -Ilinux/include -Ilinux/include/uapi/asm-generic -Ilinux/tools/arch/arm64/include
@@ -107,7 +123,6 @@ endif
 
 ifeq ($(ENABLE_ROOT),0)
 	ROOT_SRCS := \
-		patch/common/accctl.c \
 		patch/common/selinux_hide.c \
 		patch/common/selinux_sepolicy.c \
 		patch/common/sucompat.c \
