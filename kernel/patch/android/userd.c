@@ -46,7 +46,7 @@
 
 #define REPLACE_RC_FILE "/dev/user_init.rc"
 
-#define ADB_FLODER "/data/adb/"
+#define ADB_FOLDER "/data/adb/"
 #define AP_DIR "/data/adb/ap/"
 #define DEV_LOG_DIR "/dev/user_init_log/"
 #define AP_BIN_DIR AP_DIR "bin/"
@@ -56,7 +56,7 @@
 #define AP_PACKAGE_CONFIG_PATH "/data/adb/ap/package_config"
 #define ANDROID_PACKAGES_LIST_PATH "/data/system/packages.list"
 #define ANDROID_PACKAGES_LIST_TMP_PATH "/data/system/packages.list.tmp"
-#define ADB_KPM_DIR ADB_FLODER "kpm/"
+#define ADB_KPM_DIR ADB_FOLDER "kpm/"
 #define AP_KPM_DIR AP_DIR "kpm/"
 #define AP_KPM_NAME_LEN 128
 #define AP_KPM_MAX_MODULES 256
@@ -1504,23 +1504,31 @@ static int scan_and_load_kpm_dir(const char *kpm_dir, const char *event)
 
     if (android_is_safe_mode) return 0;
 
-    // Check directory disable file: <kpm_dir>disable (e.g. /data/adb/kpm/disable)
-    char global_disable[AP_KPM_NAME_LEN + 128];
-    int gd_len = snprintf(global_disable, sizeof(global_disable), "%sdisable", kpm_dir);
-    if (gd_len > 0 && gd_len < (int)sizeof(global_disable)) {
-        if (file_exists_privileged(global_disable)) {
-            log_boot("KPM directory disabled by %s\n", global_disable);
-            return 0;
-        }
-    }
-
     set_priv_sel_allow(current, true);
-    dir = filp_open(kpm_dir, O_RDONLY | O_NOFOLLOW, 0);
+    dir = filp_open(kpm_dir, O_RDONLY | O_NOFOLLOW | O_DIRECTORY, 0);
     if (!dir || IS_ERR(dir)) {
         rc = dir ? PTR_ERR(dir) : -ENOENT;
         set_priv_sel_allow(current, false);
-        if (rc != -ENOENT) log_boot("open KPM directory failed: %s, rc: %d\n", kpm_dir, rc);
-        return rc;
+        if (rc != -ENOENT && rc != -ENOTDIR) {
+            log_boot("open KPM directory failed: %s, rc: %d\n", kpm_dir, rc);
+        }
+        return (rc == -ENOENT || rc == -ENOTDIR) ? 0 : rc;
+    }
+
+    // Check directory disable file: <kpm_dir>disable (e.g. /data/adb/kpm/disable)
+    // Note: priv_sel_allow is already true here; use direct filp_open to avoid
+    // file_exists_privileged() clobbering it (that helper resets the flag to false).
+    char global_disable[AP_KPM_NAME_LEN + 128];
+    int gd_len = snprintf(global_disable, sizeof(global_disable), "%sdisable", kpm_dir);
+    if (gd_len > 0 && gd_len < (int)sizeof(global_disable)) {
+        struct file *gf = filp_open(global_disable, O_RDONLY | O_NOFOLLOW, 0);
+        if (gf && !IS_ERR(gf)) {
+            filp_close(gf, 0);
+            filp_close(dir, 0);
+            set_priv_sel_allow(current, false);
+            log_boot("KPM directory disabled by %s\n", global_disable);
+            return 0;
+        }
     }
 
     names = vmalloc((size_t)AP_KPM_MAX_MODULES * AP_KPM_NAME_LEN);
@@ -1615,6 +1623,21 @@ int load_ap_kpm_modules(void)
 KP_EXPORT_SYMBOL(load_ap_kpm_modules);
 
 #ifdef CONFIG_KP_AUTOLOAD_KPM
+static volatile int kpm_autoload_done = 0;
+
+static bool dir_exists_privileged(const char *path)
+{
+    struct file *f;
+    set_priv_sel_allow(current, true);
+    f = filp_open(path, O_RDONLY | O_NOFOLLOW | O_DIRECTORY, 0);
+    set_priv_sel_allow(current, false);
+    if (f && !IS_ERR(f)) {
+        filp_close(f, 0);
+        return true;
+    }
+    return false;
+}
+
 int autoload_kpm_modules(void)
 {
     int loaded = 0;
@@ -1639,6 +1662,20 @@ int autoload_kpm_modules(void)
         log_boot("autoload KPM done: %d loaded\n", loaded);
     }
     return loaded;
+}
+
+static void try_autoload_post_fs_data(void)
+{
+    if (kpm_autoload_done) return;
+
+    /* Check if /data is mounted: /data/system always exists on mounted /data
+     * Also check /data/adb/ in case it exists. */
+    if (dir_exists_privileged("/data/system") || dir_exists_privileged(ADB_FOLDER)) {
+        if (!xchg(&kpm_autoload_done, 1)) {
+            log_boot("post-fs-data detected, autoloading KPM...\n");
+            autoload_kpm_modules();
+        }
+    }
 }
 #endif
 
@@ -1677,8 +1714,6 @@ static void on_first_app_process()
 #ifdef CONFIG_KP_AUTOLOAD_KPM
     if (!adb_kpm_loaded || !ap_kpm_loaded) {
         autoload_kpm_modules();
-        adb_kpm_loaded = 1;
-        ap_kpm_loaded = 1;
     }
 #endif
 #ifndef CONFIG_KP_NO_OFFICIAL_MANAGER
@@ -1788,8 +1823,8 @@ static void handle_before_execve(hook_local_t *hook_local, char **__user u_filen
     }
 
 #ifdef CONFIG_KP_AUTOLOAD_KPM
-    if (init_second_stage_executed && (!adb_kpm_loaded || !ap_kpm_loaded)) {
-        autoload_kpm_modules();
+    if (init_second_stage_executed && !kpm_autoload_done) {
+        try_autoload_post_fs_data();
     }
 #endif
 }
