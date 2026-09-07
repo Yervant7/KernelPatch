@@ -39,7 +39,7 @@ jobs:
           mv kpimg.elf kpimg.elf-android
           make clean
 
-          make kpimg NO_ROOT=1
+          make kpimg NO_ROOT=1 AUTOLOAD_KPM=1
           mv kpimg kpimg-android-no-root
           mv kpimg.elf kpimg.elf-android-no-root
           make clean
