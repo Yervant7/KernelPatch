@@ -47,7 +47,7 @@
 #define REPLACE_RC_FILE "/dev/user_init.rc"
 
 #define ADB_FOLDER "/data/adb"
-#define AP_DIR "/data/adb/ap/"
+#define AP_DIR "/data/adb/ap"
 #define DEV_LOG_DIR "/dev/user_init_log/"
 #define AP_BIN_DIR AP_DIR "bin/"
 #define AP_LOG_DIR AP_DIR "log/"
@@ -57,7 +57,7 @@
 #define ANDROID_PACKAGES_LIST_PATH "/data/system/packages.list"
 #define ANDROID_PACKAGES_LIST_TMP_PATH "/data/system/packages.list.tmp"
 #define ADB_KPM_DIR ADB_FOLDER "/kpm"
-#define AP_KPM_DIR AP_DIR "kpm/"
+#define AP_KPM_DIR AP_DIR "/kpm"
 #define AP_KPM_NAME_LEN 128
 #define AP_KPM_MAX_MODULES 256
 
@@ -1567,11 +1567,11 @@ static int scan_and_load_kpm_dir(const char *kpm_dir, const char *event)
         }
 
         if (path_has_suffix(id, ".kpm")) {
-            path_len = snprintf(path, sizeof(path), "%s%s", kpm_dir, id);
-            disable_len = snprintf(disable, sizeof(disable), "%s%s.disable", kpm_dir, id);
+            path_len = snprintf(path, sizeof(path), "%s/%s", kpm_dir, id);
+            disable_len = snprintf(disable, sizeof(disable), "%s/%s.disable", kpm_dir, id);
         } else {
-            path_len = snprintf(path, sizeof(path), "%s%s/%s.kpm", kpm_dir, id, id);
-            disable_len = snprintf(disable, sizeof(disable), "%s%s/disable", kpm_dir, id);
+            path_len = snprintf(path, sizeof(path), "%s/%s/%s.kpm", kpm_dir, id, id);
+            disable_len = snprintf(disable, sizeof(disable), "%s/%s/disable", kpm_dir, id);
         }
 
         if (path_len <= 0 || path_len >= (int)sizeof(path) || disable_len <= 0 || disable_len >= (int)sizeof(disable)) {
@@ -1589,7 +1589,7 @@ static int scan_and_load_kpm_dir(const char *kpm_dir, const char *event)
             char disable2[AP_KPM_NAME_LEN + 128];
             int stem_len = (int)strlen(id) - 4;
             if (stem_len > 0) {
-                int disable2_len = snprintf(disable2, sizeof(disable2), "%s%.*s.disable", kpm_dir, stem_len, id);
+                int disable2_len = snprintf(disable2, sizeof(disable2), "%s/%.*s.disable", kpm_dir, stem_len, id);
                 if (disable2_len > 0 && disable2_len < (int)sizeof(disable2)) {
                     if (file_exists_privileged(disable2)) {
                         log_boot("skip disabled KPM: %s\n", id);
