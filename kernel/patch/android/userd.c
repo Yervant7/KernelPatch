@@ -46,7 +46,7 @@
 
 #define REPLACE_RC_FILE "/dev/user_init.rc"
 
-#define ADB_FOLDER "/data/adb/"
+#define ADB_FOLDER "/data/adb"
 #define AP_DIR "/data/adb/ap/"
 #define DEV_LOG_DIR "/dev/user_init_log/"
 #define AP_BIN_DIR AP_DIR "bin/"
@@ -56,7 +56,7 @@
 #define AP_PACKAGE_CONFIG_PATH "/data/adb/ap/package_config"
 #define ANDROID_PACKAGES_LIST_PATH "/data/system/packages.list"
 #define ANDROID_PACKAGES_LIST_TMP_PATH "/data/system/packages.list.tmp"
-#define ADB_KPM_DIR ADB_FOLDER "kpm/"
+#define ADB_KPM_DIR ADB_FOLDER "/kpm"
 #define AP_KPM_DIR AP_DIR "kpm/"
 #define AP_KPM_NAME_LEN 128
 #define AP_KPM_MAX_MODULES 256
@@ -1642,18 +1642,16 @@ int autoload_kpm_modules(void)
 {
     int loaded = 0;
 
-    if (!adb_kpm_loaded) {
+    if (!xchg(&adb_kpm_loaded, 1)) {
         int rc = scan_and_load_kpm_dir(ADB_KPM_DIR, EXTRA_EVENT_POST_FS_DATA);
-        if (rc >= 0) {
-            adb_kpm_loaded = 1;
+        if (rc > 0) {
             loaded += rc;
         }
     }
 
-    if (!ap_kpm_loaded) {
+    if (!xchg(&ap_kpm_loaded, 1)) {
         int rc = scan_and_load_kpm_dir(AP_KPM_DIR, EXTRA_EVENT_POST_FS_DATA);
-        if (rc >= 0) {
-            ap_kpm_loaded = 1;
+        if (rc > 0) {
             loaded += rc;
         }
     }
@@ -1668,7 +1666,7 @@ static void try_autoload_post_fs_data(void)
 {
     if (kpm_autoload_done) return;
 
-    /* Check if /data is mounted: /data/system always exists on mounted /data
+    /* Check if /data is mounted: /data/system probably always exists on mounted /data
      * Also check /data/adb/ in case it exists. */
     if (dir_exists_privileged("/data/system") || dir_exists_privileged(ADB_FOLDER)) {
         if (!xchg(&kpm_autoload_done, 1)) {
