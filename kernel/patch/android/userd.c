@@ -1519,7 +1519,7 @@ static int scan_and_load_kpm_dir(const char *kpm_dir, const char *event)
     // Note: priv_sel_allow is already true here; use direct filp_open to avoid
     // file_exists_privileged() clobbering it (that helper resets the flag to false).
     char global_disable[AP_KPM_NAME_LEN + 128];
-    int gd_len = snprintf(global_disable, sizeof(global_disable), "%sdisable", kpm_dir);
+    int gd_len = snprintf(global_disable, sizeof(global_disable), "%s/disable", kpm_dir);
     if (gd_len > 0 && gd_len < (int)sizeof(global_disable)) {
         struct file *gf = filp_open(global_disable, O_RDONLY | O_NOFOLLOW, 0);
         if (gf && !IS_ERR(gf)) {
